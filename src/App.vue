@@ -9,7 +9,6 @@ import {
 } from './data/blocks.js'
 import { applyInput, createState } from './game/engine.js'
 import {
-  contributeIssueUrl,
   contributionPayload,
   contributionStats,
   downloadLearned,
@@ -19,6 +18,7 @@ import {
   resetLearned,
   teachAttribute,
 } from './game/learner.js'
+import { fetchContributions, sendContribution } from './game/inbox.js'
 import { EXAMPLE_QUESTIONS } from './game/parser.js'
 import { clearUnrecognized, readUnrecognized } from './game/unrecognized.js'
 import { WIKI_CREDIT } from './game/wiki.js'
@@ -35,9 +35,10 @@ const fieldEl = ref(null)
 const importEl = ref(null)
 const looking = ref(false)
 const shareOpen = ref(false)
-const shareText = ref('')
 const shareHint = ref('')
 const shareStats = ref({ attrCount: 0, valueCount: 0, empty: true })
+const sending = ref(false)
+const pulling = ref(false)
 
 const playing = computed(() => state.value?.status === 'playing')
 const ended = computed(
@@ -133,22 +134,48 @@ async function onContribute() {
   const info = contributionStats(payload)
   shareStats.value = info
   if (info.empty) {
-    alert('本机没有比社区库更多的新知识。玩过并教过是/否之后再试。')
+    shareOpen.value = true
+    shareHint.value = '本机没有比社区库更多的新知识。玩过并教过是/否之后再试。'
     return
   }
-  shareText.value = JSON.stringify(payload, null, 2)
-  shareOpen.value = true
-  shareHint.value = '请把下面这段发给作者。有 GitHub 也可以直接开议题。'
-  try {
-    await navigator.clipboard.writeText(shareText.value)
-    shareHint.value = '已复制。发给作者即可；有 GitHub 会尝试打开议题。'
-  } catch {
-    shareHint.value = '请长按选中下面这段，复制后发给作者。'
+  const fingerprint = JSON.stringify(payload)
+  if (localStorage.getItem('guess-block-last-sent') === fingerprint) {
+    shareOpen.value = true
+    shareHint.value = '这些内容已经发过了，没有新的变化。'
+    return
   }
-  const href = contributeIssueUrl(payload)
-  const inApp = /MicroMessenger|QQ\//i.test(navigator.userAgent)
-  if (!inApp && href.length < 7000) {
-    window.open(href, '_blank', 'noopener')
+  sending.value = true
+  shareOpen.value = true
+  shareHint.value = '正在发送…'
+  try {
+    await sendContribution(payload)
+    localStorage.setItem('guess-block-last-sent', fingerprint)
+    shareHint.value = `已发送（${info.attrCount} 个分类 · ${info.valueCount} 条是/否）。作者审核后会进入下一版，不用再发微信。`
+  } catch (err) {
+    shareHint.value =
+      err?.message === 'too-large'
+        ? '这次新知识太多，一键发不出去。请用下面的「导出学习数据」保存文件后发给作者。'
+        : '没发出去，请换个网络再点一次。'
+  } finally {
+    sending.value = false
+  }
+}
+
+async function onPullInbox() {
+  pulling.value = true
+  try {
+    const items = await fetchContributions()
+    if (!items.length) {
+      alert('还没有朋友发来新知识。')
+      return
+    }
+    for (const item of items) importLearnedJson(JSON.stringify(item.knowledge))
+    refreshKnowledge()
+    alert(`已收下 ${items.length} 条。这只写入本机。要让全员生效，请在电脑项目里运行 npm run pull-inbox，核对后再发布。`)
+  } catch {
+    alert('收件失败，请检查网络后再试。')
+  } finally {
+    pulling.value = false
   }
 }
 
@@ -179,12 +206,9 @@ async function onImportFile(event) {
     <div v-if="shareOpen" class="panel share">
       <h2>发给作者</h2>
       <p class="hint">{{ shareHint }}</p>
-      <p class="notice">
-        {{ shareStats.attrCount }} 个新分类 · {{ shareStats.valueCount }} 条是/否
-      </p>
-      <textarea class="share-box" readonly :value="shareText" rows="8" />
-      <button class="btn" type="button" @click="onContribute">再复制一次</button>
-      <button class="btn ghost" type="button" @click="shareOpen = false">关闭</button>
+      <button class="btn ghost" type="button" :disabled="sending" @click="shareOpen = false">
+        关闭
+      </button>
     </div>
 
     <section v-if="screen === 'home'" class="panel">
@@ -196,7 +220,7 @@ async function onImportFile(event) {
         <li>提问 {{ MAX_QUESTIONS }} 次，猜测 {{ MAX_GUESSES }} 次。猜中即胜。</li>
         <li>听不懂的问题会先查中文 Minecraft Wiki；查到就立刻记入知识库并回答。</li>
         <li>Wiki 也查不清时，会归入分类树，本局结束后仍可手动教是/否。</li>
-        <li>新知识先存在你这台设备上。可以提交给作者，审核后会进入下一版，大家都能用。</li>
+        <li>新知识先存在你这台设备上。点「一键发给作者」即可，不用复制到微信或 QQ。</li>
       </ul>
       <p class="notice" style="margin: 12px 0">
         已学习 {{ stats.attrCount }} 个新分类，标注了 {{ stats.valueCount }} 条是/否。
@@ -221,7 +245,7 @@ async function onImportFile(event) {
         <p class="rules" style="padding-left: 0">
           新问题会先查中文 Minecraft Wiki。查到的是/否会立刻写入本机知识库。
           Wiki 没有把握时<strong>不会编造</strong>，本局结束后仍可手动教。
-          本机多出来的知识可以提交给作者；作者核对后会并入社区库，下次更新全员生效。
+          本机多出来的知识可以一键发给作者；作者核对后会并入社区库，下次更新全员生效。
           条目版权归 Wiki 作者，许可为 CC BY-NC-SA。
         </p>
         <p class="notice">
@@ -248,7 +272,12 @@ async function onImportFile(event) {
         hidden
         @change="onImportFile"
       />
-      <button class="btn" type="button" @click="onContribute">把本机新知识发给作者</button>
+      <button class="btn" type="button" :disabled="sending" @click="onContribute">
+        {{ sending ? '发送中…' : '一键发给作者' }}
+      </button>
+      <button class="btn ghost" type="button" :disabled="pulling" @click="onPullInbox">
+        {{ pulling ? '收取中…' : '收取朋友发来的知识' }}
+      </button>
       <button class="btn ghost" type="button" @click="downloadLearned">导出学习数据</button>
       <button class="btn ghost" type="button" @click="importEl?.click()">导入学习数据</button>
       <button class="btn ghost" type="button" @click="onResetLearned">清空学习数据</button>
@@ -294,9 +323,10 @@ async function onImportFile(event) {
           v-if="!shareStats.empty"
           class="btn ghost"
           type="button"
+          :disabled="sending"
           @click="onContribute"
         >
-          把本局新知识发给作者
+          {{ sending ? '发送中…' : '一键发给作者' }}
         </button>
         <button class="btn ghost" type="button" @click="goHome">返回首页</button>
       </div>

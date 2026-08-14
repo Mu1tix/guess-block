@@ -4,7 +4,6 @@ import { logUnrecognized } from './unrecognized.js'
 import { normalize } from './parser.js'
 
 const KEY = 'guess-block-learned-v1'
-export const CONTRIBUTE_REPO = 'Mu1tix/guess-block'
 
 function emptyDb() {
   return {
@@ -105,18 +104,6 @@ export function contributionStats(payload = contributionPayload()) {
     0,
   )
   return { attrCount, valueCount, empty: attrCount === 0 && valueCount === 0 }
-}
-
-export function contributeIssueUrl(payload) {
-  const title = `知识贡献 ${new Date().toISOString().slice(0, 10)}`
-  const body = [
-    '请审核后再并入 `src/data/community.json`，不要直接相信未核对的是/否。',
-    '',
-    '```json',
-    JSON.stringify(payload, null, 2),
-    '```',
-  ].join('\n')
-  return `https://github.com/${CONTRIBUTE_REPO}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`
 }
 
 function stripQuestionTail(text) {

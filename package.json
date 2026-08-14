@@ -7,7 +7,8 @@
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview --host",
-    "merge-community": "node scripts/merge-community.mjs"
+    "merge-community": "node scripts/merge-community.mjs",
+    "pull-inbox": "node scripts/pull-inbox.mjs"
   },
   "dependencies": {
     "vue": "^3.5.13"
