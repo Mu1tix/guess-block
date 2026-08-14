@@ -1,8 +1,10 @@
+import communitySeed from '../data/community.json'
 import { BASE_BRANCHES } from '../data/taxonomy.js'
 import { logUnrecognized } from './unrecognized.js'
 import { normalize } from './parser.js'
 
 const KEY = 'guess-block-learned-v1'
+export const CONTRIBUTE_REPO = 'Mu1tix/guess-block'
 
 function emptyDb() {
   return {
@@ -12,19 +14,55 @@ function emptyDb() {
   }
 }
 
-export function loadLearned() {
+function asDb(raw) {
+  if (!raw || typeof raw !== 'object') return emptyDb()
+  return {
+    version: 1,
+    attributes: raw.attributes || {},
+    values: raw.values || {},
+  }
+}
+
+/**
+ * extra 覆盖 base 的同名是/否；分类会合并别名。
+ */
+export function mergeLearned(base, extra) {
+  const left = asDb(base)
+  const right = asDb(extra)
+  const attributes = { ...left.attributes }
+  for (const [id, attr] of Object.entries(right.attributes)) {
+    const prev = attributes[id]
+    if (!prev) {
+      attributes[id] = attr
+      continue
+    }
+    attributes[id] = {
+      ...prev,
+      ...attr,
+      keys: [...new Set([...(prev.keys || []), ...(attr.keys || [])])],
+      examples: [...new Set([...(prev.examples || []), ...(attr.examples || [])])],
+    }
+  }
+  const values = { ...left.values }
+  for (const [blockId, row] of Object.entries(right.values)) {
+    values[blockId] = { ...(values[blockId] || {}), ...row }
+  }
+  return { version: 1, attributes, values }
+}
+
+function loadLocalOnly() {
   if (typeof localStorage === 'undefined') return emptyDb()
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) || 'null')
     if (!raw || raw.version !== 1) return emptyDb()
-    return {
-      version: 1,
-      attributes: raw.attributes || {},
-      values: raw.values || {},
-    }
+    return asDb(raw)
   } catch {
     return emptyDb()
   }
+}
+
+export function loadLearned() {
+  return mergeLearned(communitySeed, loadLocalOnly())
 }
 
 export function saveLearned(db) {
@@ -35,6 +73,50 @@ export function saveLearned(db) {
 export function resetLearned() {
   if (typeof localStorage === 'undefined') return
   localStorage.removeItem(KEY)
+}
+
+/**
+ * 本机比社区库多出来的部分，用来发给作者审核。
+ */
+export function contributionPayload() {
+  const seed = asDb(communitySeed)
+  const full = loadLearned()
+  const attributes = {}
+  for (const [id, attr] of Object.entries(full.attributes)) {
+    if (!seed.attributes[id]) attributes[id] = attr
+  }
+  const values = {}
+  for (const [blockId, row] of Object.entries(full.values)) {
+    const extra = {}
+    for (const [attrId, value] of Object.entries(row)) {
+      if (typeof value !== 'boolean') continue
+      if (seed.values[blockId]?.[attrId] === value) continue
+      extra[attrId] = value
+    }
+    if (Object.keys(extra).length) values[blockId] = extra
+  }
+  return { version: 1, attributes, values }
+}
+
+export function contributionStats(payload = contributionPayload()) {
+  const attrCount = Object.keys(payload.attributes).length
+  const valueCount = Object.values(payload.values).reduce(
+    (n, row) => n + Object.values(row).filter((v) => typeof v === 'boolean').length,
+    0,
+  )
+  return { attrCount, valueCount, empty: attrCount === 0 && valueCount === 0 }
+}
+
+export function contributeIssueUrl(payload) {
+  const title = `知识贡献 ${new Date().toISOString().slice(0, 10)}`
+  const body = [
+    '请审核后再并入 `src/data/community.json`，不要直接相信未核对的是/否。',
+    '',
+    '```json',
+    JSON.stringify(payload, null, 2),
+    '```',
+  ].join('\n')
+  return `https://github.com/${CONTRIBUTE_REPO}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`
 }
 
 function stripQuestionTail(text) {

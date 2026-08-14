@@ -9,6 +9,9 @@ import {
 } from './data/blocks.js'
 import { applyInput, createState } from './game/engine.js'
 import {
+  contributeIssueUrl,
+  contributionPayload,
+  contributionStats,
   downloadLearned,
   importLearnedJson,
   knowledgeStats,
@@ -31,6 +34,10 @@ const historyEl = ref(null)
 const fieldEl = ref(null)
 const importEl = ref(null)
 const looking = ref(false)
+const shareOpen = ref(false)
+const shareText = ref('')
+const shareHint = ref('')
+const shareStats = ref({ attrCount: 0, valueCount: 0, empty: true })
 
 const playing = computed(() => state.value?.status === 'playing')
 const ended = computed(
@@ -42,6 +49,7 @@ function refreshKnowledge() {
   tree.value = knowledgeTree()
   stats.value = knowledgeStats()
   unrecognized.value = readUnrecognized()
+  shareStats.value = contributionStats()
 }
 
 onMounted(refreshKnowledge)
@@ -80,6 +88,7 @@ async function submit() {
     state.value = result.state
     notice.value = result.notice
     if (!result.notice) input.value = ''
+    shareStats.value = contributionStats()
     await nextTick()
     if (historyEl.value) {
       historyEl.value.scrollTop = historyEl.value.scrollHeight
@@ -97,6 +106,7 @@ function onTeach(item, yes) {
     ...state.value,
     pendingTeach: state.value.pendingTeach.filter((x) => x.attrId !== item.attrId),
   }
+  shareStats.value = contributionStats()
 }
 
 function onSkipTeach(item) {
@@ -113,9 +123,33 @@ function onClearLog() {
 }
 
 function onResetLearned() {
-  if (!confirm('清空本机学到的分类和是/否标注？内置方块数据不会被删。')) return
+  if (!confirm('清空本机额外学到的分类和是/否？作者发布的社区库会保留。')) return
   resetLearned()
   refreshKnowledge()
+}
+
+async function onContribute() {
+  const payload = contributionPayload()
+  const info = contributionStats(payload)
+  shareStats.value = info
+  if (info.empty) {
+    alert('本机没有比社区库更多的新知识。玩过并教过是/否之后再试。')
+    return
+  }
+  shareText.value = JSON.stringify(payload, null, 2)
+  shareOpen.value = true
+  shareHint.value = '请把下面这段发给作者。有 GitHub 也可以直接开议题。'
+  try {
+    await navigator.clipboard.writeText(shareText.value)
+    shareHint.value = '已复制。发给作者即可；有 GitHub 会尝试打开议题。'
+  } catch {
+    shareHint.value = '请长按选中下面这段，复制后发给作者。'
+  }
+  const href = contributeIssueUrl(payload)
+  const inApp = /MicroMessenger|QQ\//i.test(navigator.userAgent)
+  if (!inApp && href.length < 7000) {
+    window.open(href, '_blank', 'noopener')
+  }
 }
 
 async function onImportFile(event) {
@@ -142,6 +176,17 @@ async function onImportFile(event) {
       </div>
     </header>
 
+    <div v-if="shareOpen" class="panel share">
+      <h2>发给作者</h2>
+      <p class="hint">{{ shareHint }}</p>
+      <p class="notice">
+        {{ shareStats.attrCount }} 个新分类 · {{ shareStats.valueCount }} 条是/否
+      </p>
+      <textarea class="share-box" readonly :value="shareText" rows="8" />
+      <button class="btn" type="button" @click="onContribute">再复制一次</button>
+      <button class="btn ghost" type="button" @click="shareOpen = false">关闭</button>
+    </div>
+
     <section v-if="screen === 'home'" class="panel">
       <h2>怎么玩</h2>
       <ul class="rules">
@@ -151,6 +196,7 @@ async function onImportFile(event) {
         <li>提问 {{ MAX_QUESTIONS }} 次，猜测 {{ MAX_GUESSES }} 次。猜中即胜。</li>
         <li>听不懂的问题会先查中文 Minecraft Wiki；查到就立刻记入知识库并回答。</li>
         <li>Wiki 也查不清时，会归入分类树，本局结束后仍可手动教是/否。</li>
+        <li>新知识先存在你这台设备上。可以提交给作者，审核后会进入下一版，大家都能用。</li>
       </ul>
       <p class="notice" style="margin: 12px 0">
         已学习 {{ stats.attrCount }} 个新分类，标注了 {{ stats.valueCount }} 条是/否。
@@ -175,6 +221,7 @@ async function onImportFile(event) {
         <p class="rules" style="padding-left: 0">
           新问题会先查中文 Minecraft Wiki。查到的是/否会立刻写入本机知识库。
           Wiki 没有把握时<strong>不会编造</strong>，本局结束后仍可手动教。
+          本机多出来的知识可以提交给作者；作者核对后会并入社区库，下次更新全员生效。
           条目版权归 Wiki 作者，许可为 CC BY-NC-SA。
         </p>
         <p class="notice">
@@ -201,7 +248,8 @@ async function onImportFile(event) {
         hidden
         @change="onImportFile"
       />
-      <button class="btn" type="button" @click="downloadLearned">导出学习数据</button>
+      <button class="btn" type="button" @click="onContribute">把本机新知识发给作者</button>
+      <button class="btn ghost" type="button" @click="downloadLearned">导出学习数据</button>
       <button class="btn ghost" type="button" @click="importEl?.click()">导入学习数据</button>
       <button class="btn ghost" type="button" @click="onResetLearned">清空学习数据</button>
       <button class="btn ghost" type="button" @click="goHome">返回首页</button>
@@ -242,6 +290,14 @@ async function onImportFile(event) {
         </div>
 
         <button class="btn" type="button" @click="start">再来一局</button>
+        <button
+          v-if="!shareStats.empty"
+          class="btn ghost"
+          type="button"
+          @click="onContribute"
+        >
+          把本局新知识发给作者
+        </button>
         <button class="btn ghost" type="button" @click="goHome">返回首页</button>
       </div>
 

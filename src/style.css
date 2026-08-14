@@ -337,3 +337,19 @@ button {
   margin-top: 0;
   flex: 1;
 }
+
+.share {
+  margin-bottom: 12px;
+}
+
+.share-box {
+  width: 100%;
+  margin-top: 10px;
+  border: 2px solid var(--line);
+  background: #14110e;
+  color: var(--text);
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+}
